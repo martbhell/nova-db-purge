@@ -145,6 +145,7 @@ def purger(db_url, date, file_name, cell, dryrun=False):
     'migrations',
     'virtual_interfaces',
     'block_device_mapping',
+    'instance_extra',
     'security_group_instance_association']
 
     if date: 
