@@ -38,6 +38,8 @@ Nova versions supported
 -----------------------
 We use it in Icehouse.
 
+Tested on a test dump of Newton. Now requires a nova_api database connection
+
 
 Bugs and Disclaimer
 -------------------

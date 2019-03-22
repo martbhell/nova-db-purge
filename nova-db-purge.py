@@ -90,6 +90,23 @@ def delete_instance_id_mappings(db_meta, instance_uuid):
         print "ERROR - delete - instance_id_mappings with instance_uuid: " + str(instance_uuid)
         print str(e)
 
+def delete_nova_api_request_specs(db_meta, instance_uuid):
+    table = Table('request_specs', db_meta, autoload=True)
+
+    try:
+        table.delete(table.c.instance_uuid == instance_uuid).execute()
+    except Exception as e:
+        print "ERROR - delete - nova_api request_specs with instance_uuid: " + str(instance_uuid)
+        print str(e)
+
+def select_nova_api_request_specs(db_meta, instance_uuid):
+    table = Table('request_specs', db_meta, autoload=True)
+
+    try:
+        print "looking for %s in nova_api.request_specs" % str(instance_uuid)
+    except Exception as e:
+        print "ERROR - select - nova_api request_specs with instance_uuid: " + str(instance_uuid)
+        print str(e)
 
 def get_instances_by_date(db_meta, date, cell=None):
     instances = Table('instances', db_meta, autoload=True)
@@ -107,6 +124,7 @@ def get_instances_by_file(file_name, cell=None):
     instances_uuid = []
     f = open(file_name, "r")
     for line in f:
+        print line
         line = line.rstrip()
         id, uuid, created_at, deleted_at, display_name, cell_name = line.split(',')
         if cell == None:
@@ -129,12 +147,14 @@ def confirm_instance_delete_state(db_meta, instance_uuid):
     return True
 
 
-def purger(db_url, date, file_name, cell, dryrun=False):
+def purger(db_url, api_db_url, date, file_name, cell, dryrun=False, debug=False):
     nova_db_session, nova_db_meta, nova_db_base = makeConnection(db_url)
+    nova_api_db_session, nova_api_db_meta, nova_api_db_base = makeConnection(api_db_url)
     out_file_name = str(datetime.datetime.utcnow())
     instances_filtered = 0
     instances_deleted = 0
     commits = 0
+    api_commits = 0
 
     tables = [
     'instance_actions',
@@ -169,6 +189,9 @@ def purger(db_url, date, file_name, cell, dryrun=False):
         if not confirm_instance_delete_state(nova_db_meta, uuid):
             continue
 
+        if debug:
+	    select_nova_api_request_specs(nova_api_db_meta, uuid)
+
         if not dryrun:
             instances_deleted = instances_deleted + 1
             delete_instance_actions_events(nova_db_meta, uuid)
@@ -180,12 +203,19 @@ def purger(db_url, date, file_name, cell, dryrun=False):
                 nova_db_session.commit()
                 commits = 0
             else: commits = commits + 1
-
+            delete_nova_api_request_specs(nova_api_db_meta, uuid)
+            if api_commits > 1000:
+                nova_api_db_session.commit()
+                api_commits = 0
+            else: api_commits = api_commits + 1
+	    
         if file_name == None:
             with open(out_file_name, 'a') as f:
                 f.write(str(id) +','+ uuid +','+ str(created_at) +','+ str(deleted_at) +','+display_name +','+ cell_name+'\n')
 
-    if not dryrun: nova_db_session.commit()
+    if not dryrun: 
+        nova_db_session.commit()
+        nova_api_db_session.commit()
     print "Instances filtered: " + str(instances_filtered)
     print "Instances deleted : " + str(instances_deleted)
 
@@ -200,6 +230,15 @@ def get_db_url(config_file):
         sys.exit(2)
     return db_url
 
+def get_api_db_url(config_file):
+    parser = ConfigParser.SafeConfigParser()
+    try:
+        parser.read(config_file)
+        api_db_url = parser.get('api_database', 'connection')
+    except:
+        print "ERROR: Check nova api_database configuration file."
+        sys.exit(3)
+    return api_db_url
 
 def parse_cmdline_args():
     parser = argparse.ArgumentParser()
@@ -208,12 +247,15 @@ def parse_cmdline_args():
         help="Remove deleted instances until this date")
     parser.add_argument("--file",
         default="False",
-        help="Remove deleted instances defined in the file")
+        help="Remove deleted instances defined in the file format: 'id,uuid,created_at,deleted_at,display_name,cell_name'")
     parser.add_argument("--cell",
         default="False",
         help="Remove instances that belong to cell")
     parser.add_argument("--dryrun", 
         help="Don't delete instances",
+        action="store_true")
+    parser.add_argument("--debug",
+        help="Print a bit more",
         action="store_true")
     parser.add_argument("--config",
         help='Configuration file')
@@ -250,6 +292,11 @@ def main():
     else:
         cell = args.cell
 
+    if args.debug == 'False':
+        debug = None
+    else:
+        debug = args.debug
+
     if date == None and file_name == None:
         print("ERROR: Date or File needs to be defined")
 
@@ -257,8 +304,9 @@ def main():
         print("ERROR: Date and File can't be defined simultaneously")
 
     db_url = get_db_url(args.config)
+    api_db_url = get_api_db_url(args.config)
 
-    purger(db_url, date, file_name, cell, args.dryrun)
+    purger(db_url, api_db_url, date, file_name, cell, args.dryrun, debug)
 
 
 if __name__ == "__main__":
